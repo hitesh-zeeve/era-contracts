@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import {Ownable} from "@openzeppelin/contracts@4.9.5/access/Ownable.sol";
 import {AccessControl} from "@openzeppelin/contracts@4.9.5/access/AccessControl.sol";
+import {Ownable} from "@openzeppelin/contracts@4.9.5/access/Ownable.sol";
 import {AlreadyWhitelisted, InvalidSelector, NonEmptyCalldata, NotWhitelisted, ZeroAddress} from "../common/L1ContractErrors.sol";
+import {DataEncoding} from "../../common/libraries/DataEncoding.sol";
+import {IAssetRouterBase} from "../bridge/asset-router/IAssetRouterBase.sol";
 import {ITransactionFilterer} from "../state-transition/chain-interfaces/ITransactionFilterer.sol";
 
 /**
@@ -20,7 +22,6 @@ interface INFTAsset {
  */
 contract AccessControlledTransactionFilterer is ITransactionFilterer, AccessControl, Ownable {
     INFTAsset public nftAsset;
-    // address public l2BridgeAddress;
     address public immutable L1_ASSET_ROUTER;
 
     /**
@@ -29,10 +30,9 @@ contract AccessControlledTransactionFilterer is ITransactionFilterer, AccessCont
      * @dev This function is called on the L2 when a deposit is initiated from L1
      */
     bytes4 constant FINALIZE_DEPOSIT_SELECTOR_L2 = bytes4(keccak256("finalizeDeposit(address,address,address,uint256,bytes)"));
+    bytes32 public constant SUPERUSER_ROLE = keccak256("SUPERUSER_ROLE");
 
     event NFTAssetUpdated(address indexed oldAddress, address indexed newAddress);
-    // event L2BridgeAddressUpdated(address indexed oldAddress, address indexed newAddress);
-    event TransactionChecked(address indexed sender, bool allowed);
 
     /**
      * @dev Sets initial config and grants admin role to deployer
@@ -42,13 +42,12 @@ contract AccessControlledTransactionFilterer is ITransactionFilterer, AccessCont
     constructor(address _l1AssetRouter, address _nftAssetAddress) {
         require(_l1AssetRouter != address(0), "Invalid L1 Asset Router address");
         require(_nftAssetAddress != address(0), "Invalid NFT Asset address");
-        // require(_l2BridgeAddress != address(0), "Invalid L2 Bridge address");
 
         L1_ASSET_ROUTER = _l1AssetRouter;
         nftAsset = INFTAsset(_nftAssetAddress);
-        // l2BridgeAddress = _l2BridgeAddress;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(SUPERUSER_ROLE, msg.sender);
     }
 
     /**
@@ -74,14 +73,14 @@ contract AccessControlledTransactionFilterer is ITransactionFilterer, AccessCont
      * 
      * Rules:
      * 1. If `sender == L1_ASSET_ROUTER` (i.e., a token bridge):
-     *    - The `l2Calldata` must start with the `finalizeDeposit(address,address,address,uint256,bytes)` selector
+     *    - The `l2Calldata` must start with the `FINALIZE_DEPOSIT_SELECTOR_L2` selector or `IAssetRouterBase.finalizeDeposit` selector.
      *    - The `l1Sender` decoded from calldata must be:
-     *        - An admin (granted `DEFAULT_ADMIN_ROLE`), or
+     *        - A super admin (granted `SUPER_ADMIN_ROLE`), or
      *        - The owner of the NFT, or hold at least 1 NFT
-     *    - The `_l1Token` address must not be zero
+     *    - The `l1Token`/`assetId` must not be zero
      * 
      * 2. If `sender != L1_ASSET_ROUTER` (i.e., base ETH deposit):
-     *    - The sender must either be an admin or a valid NFT owner
+     *    - The sender must either be a super admin or a valid NFT owner
      *    - The `l2Calldata` must be empty
      *
      * @param sender The address initiating the L1 → L2 transaction
@@ -101,19 +100,31 @@ contract AccessControlledTransactionFilterer is ITransactionFilterer, AccessCont
         // This case is for token transfer
 
             bytes4 l2TxSelector = bytes4(l2Calldata[:4]);
-            (address l1Sender, , address l1Token, ,) = abi.decode(l2Calldata[4:], (address, address, address, uint256, bytes));
+            address l1Sender = address(0);
 
-            // All calls are allowed to the DEFAULT_ADMIN_ROLE
-            if (hasRole(DEFAULT_ADMIN_ROLE, l1Sender)) {
-                return true;
-            }
+            // Check for function signature to equal legacy and modern finalizeDeposit functions.
+            if (l2TxSelector == FINALIZE_DEPOSIT_SELECTOR_L2) {
+                (l1Sender, , address l1Token, ,) = abi.decode(l2Calldata[4:], (address, address, address, uint256, bytes));
+                if (l1Token == address(0)) {
+                    revert ZeroAddress();
+                }
+            } else if (l2TxSelector == IAssetRouterBase.finalizeDeposit.selector) {
+                (, bytes32 decodedAssetId, bytes _assetData) = abi.decode(l2Calldata[4:], (uint256, bytes32, bytes));
+                (l1Sender, , , ,) = DataEncoding.decodeBridgeMintData(_assetData);
 
-            // Check for function signature to equal legacy finalizeDeposit functions. modern `finalizeDeposit` and `finalizeDepositLegacyBridge` will not work.
-            if (l2TxSelector != FINALIZE_DEPOSIT_SELECTOR_L2) {
+                if (decodedAssetId == bytes32(0)) {
+                    revert ZeroAddress();
+                }
+            } else {
                 revert InvalidSelector(l2TxSelector);
             }
-            if (l1Token == address(0)) {
+
+            if (l1Sender == address(0)) {
                 revert ZeroAddress();
+            }
+            // All calls are allowed to the SUPER_ADMIN_ROLE
+            if (hasRole(SUPER_ADMIN_ROLE, l1Sender)) {
+                return true;
             }
             // If the call is initiated by NFT owners or NFT contract owner
             if (nftAsset.owner() == l1Sender || nftAsset.balanceOf(l1Sender) > 0) {
@@ -122,8 +133,8 @@ contract AccessControlledTransactionFilterer is ITransactionFilterer, AccessCont
         } else {
         // This tx is for base ETH token transfer
 
-            // All calls are allowed to the DEFAULT_ADMIN_ROLE
-            if (hasRole(DEFAULT_ADMIN_ROLE, sender)) {
+            // All calls are allowed to the SUPER_ADMIN_ROLE
+            if (hasRole(SUPER_ADMIN_ROLE, sender)) {
                 return true;
             }
 
