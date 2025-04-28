@@ -80,8 +80,8 @@
     "contractName": "L2BaseToken",
     "bytecodePath": "artifacts-zk/contracts-preprocessed/L2BaseToken.sol/L2BaseToken.json",
     "sourceCodePath": "contracts-preprocessed/L2BaseToken.sol",
-    "bytecodeHash": "0x01000103174a90beadc2cffe3e81bdb7b8a576174e888809c1953175fd3015b4",
-    "sourceCodeHash": "0x8bdd2b4d0b53dba84c9f0af250bbaa2aad10b3de6747bba957f0bd3721090dfa"
+    "bytecodeHash": "0x010001030ab12ff78aa4d050e1b79d5164864b4fd139a97d9c96e648b5ef3133",
+    "sourceCodeHash": "0x19d153d012b1d13a39ae7a0d95433267bacedbc9c66edcb61028058881a3dd08"
   },
   {
     "contractName": "MsgValueSimulator",

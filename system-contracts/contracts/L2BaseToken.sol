@@ -131,13 +131,13 @@ contract L2BaseToken is IBaseToken, SystemContractBase {
     /// @dev This method has not been stabilized and might be
     /// removed later on.
     function name() external pure override returns (string memory) {
-        return "Ether";
+        return "Syscoin";
     }
 
     /// @dev This method has not been stabilized and might be
     /// removed later on.
     function symbol() external pure override returns (string memory) {
-        return "ETH";
+        return "SYS";
     }
 
     /// @dev This method has not been stabilized and might be
